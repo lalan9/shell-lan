@@ -50,3 +50,6 @@ echo "=== 显示状态 ==="
 timedatectl status
 echo "当前系统时间:"
 date
+echo "timedatectl时间:"
+timedatectl
+
