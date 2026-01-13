@@ -1,86 +1,52 @@
 #!/bin/bash
 
-# 脚本功能：自动配置系统时区为北京时间，并启用NTP时间同步
-# 兼容系统：Debian 11/12, CentOS 7.9
-# 使用方法：sudo ./sync_time.sh
-
 set -e
 
-# 定义颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m' # No Color
-
-# 检查root权限
-if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${RED}错误：此脚本必须使用root权限运行！${NC}" >&2
-    exit 1
-fi
-
-# 检测系统类型
+echo "=== 检查系统类型 ==="
 if [ -f /etc/debian_version ]; then
     OS="debian"
-elif [ -f /etc/centos-release ] || [ -f /etc/redhat-release ]; then
+elif [ -f /etc/redhat-release ]; then
     OS="centos"
 else
-    echo -e "${RED}错误：不支持的操作系统！${NC}" >&2
+    echo "不支持的系统"
     exit 1
 fi
+echo "系统类型: $OS"
 
-# 设置时区为Asia/Shanghai
-echo -e "${YELLOW}[1/3] 设置时区为 Asia/Shanghai...${NC}"
-timedatectl set-timezone Asia/Shanghai || {
-    # 如果timedatectl不可用（如CentOS 7最小安装），使用传统方法
-    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-    echo -e "${YELLOW}使用传统方法设置时区${NC}"
-}
-
-# 安装并配置NTP服务
-echo -e "${YELLOW}[2/3] 配置NTP时间同步...${NC}"
-case $OS in
-    debian)
-        # Debian使用systemd-timesyncd或chrony
-        if ! command -v timedatectl &> /dev/null; then
-            apt update && apt install -y systemd
-        fi
-        apt update && apt install -y chrony || {
-            echo -e "${YELLOW}安装chrony失败，尝试使用systemd-timesyncd${NC}"
-            apt install -y systemd-timesyncd
-        }
-        systemctl enable --now chronyd || systemctl enable --now systemd-timesyncd
-        ;;
-    centos)
-        # CentOS 7使用ntpd或chrony
-        if grep -q "CentOS Linux release 7" /etc/centos-release; then
-            yum install -y chrony || yum install -y ntp
-            systemctl enable --now chronyd || {
-                systemctl enable --now ntpd
-                ntpdate pool.ntp.org
-            }
-        else
-            # CentOS 8+默认使用chrony
-            yum install -y chrony
-            systemctl enable --now chronyd
-        fi
-        ;;
-esac
-
-# 强制同步时间（针对首次运行）
-echo -e "${YELLOW}[3/3] 强制同步时间...${NC}"
-if command -v chronyc &> /dev/null; then
-    chronyc makestep
-elif command -v ntpdate &> /dev/null; then
-    ntpdate pool.ntp.org
-elif command -v timedatectl &> /dev/null; then
-    timedatectl set-ntp true
+echo "=== 检查 systemd-timesyncd ==="
+if systemctl list-unit-files | grep -q systemd-timesyncd.service; then
+    echo "systemd-timesyncd 已存在"
+else
+    echo "systemd-timesyncd 不存在，开始安装..."
+    if [ "$OS" = "debian" ]; then
+        apt update
+        apt install -y systemd-timesyncd
+    elif [ "$OS" = "centos" ]; then
+        echo "CentOS 不自带 systemd-timesyncd，建议使用 chrony 替代"
+        yum install -y chrony
+        echo "已安装 chrony，使用 chrony 同步 NTP"
+        echo "server ntp1.aliyun.com iburst" >> /etc/chrony.conf
+        echo "server ntp1.tencent.com iburst" >> /etc/chrony.conf
+        systemctl enable chronyd --now
+        echo "当前时间:"
+        date
+        exit 0
+    fi
 fi
 
-# 验证结果
-echo -e "\n${GREEN}验证时间配置：${NC}"
-timedatectl status 2>/dev/null || {
-    echo -e "${YELLOW}当前时间：$(date)${NC}"
-    echo -e "${YELLOW}时区：$(ls -l /etc/localtime | awk '{print $NF}')${NC}"
-}
+echo "=== 配置 NTP 服务器 ==="
+cat <<EOF > /etc/systemd/timesyncd.conf
+[Time]
+NTP=ntp1.aliyun.com ntp1.tencent.com
+EOF
 
-echo -e "\n${GREEN}[完成] 时间同步配置成功！${NC}"
+echo "=== 启动并开机自启 systemd-timesyncd ==="
+systemctl enable systemd-timesyncd --now
+
+echo "=== 设置时区为上海 ==="
+timedatectl set-timezone Asia/Shanghai
+
+echo "=== 显示状态 ==="
+timedatectl status
+echo "当前系统时间:"
+date
