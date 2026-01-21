@@ -47,7 +47,7 @@ grep -E "^(nameserver|search|options)" /etc/resolv.conf || echo "未检测到 DN
 # ---------- IPv4 / IPv6 出口测试 ----------
 echo
 echo "======================================"
-echo " 当前 出口（curl test.ipw.cn）"
+echo " 当前 默认 出口（curl test.ipw.cn）"
 echo "======================================"
 curl -4 -s --connect-timeout 5 https://test.ipw.cn || echo "IPv4 请求失败"
 
