@@ -12,29 +12,38 @@ echo "======================================"
 
 GAI_CONF="/etc/gai.conf"
 
-# ---------- 检查系统 ----------
+# ---------- 检查并处理 gai.conf ----------
 if [ ! -f "$GAI_CONF" ]; then
-    echo "❌ 未找到 $GAI_CONF，系统不支持 gai.conf"
-    exit 1
-fi
-
-# ---------- 备份 ----------
-if [ ! -f "${GAI_CONF}.bak" ]; then
-    cp "$GAI_CONF" "${GAI_CONF}.bak"
-    echo "✔ 已备份 $GAI_CONF -> ${GAI_CONF}.bak"
+    echo "⚠️ 未找到 $GAI_CONF，正在为你自动创建默认配置..."
+    # 写入 glibc 默认的 IPv4 优先规则
+    cat << EOF > "$GAI_CONF"
+# /etc/gai.conf 默认配置（由脚本自动初始化）
+precedence  ::1/128       50
+precedence  ::/0          40
+precedence  ::ffff:0:0/96 100
+precedence  2002::/16     30
+precedence  2001::/32      5
+EOF
+    echo "✔ $GAI_CONF 创建成功并已配置 IPv4 优先"
 else
-    echo "✔ 备份文件已存在，跳过"
-fi
-
-# ---------- 设置 IPv4 优先 ----------
-if grep -q "^precedence ::ffff:0:0/96 100" "$GAI_CONF"; then
-    echo "✔ IPv4 优先已存在，无需修改"
-else
-    sed -i 's/^#precedence ::ffff:0:0\/96 100/precedence ::ffff:0:0\/96 100/' "$GAI_CONF"
-    if ! grep -q "^precedence ::ffff:0:0/96 100" "$GAI_CONF"; then
-        echo "precedence ::ffff:0:0/96 100" >> "$GAI_CONF"
+    # ---------- 备份 ----------
+    if [ ! -f "${GAI_CONF}.bak" ]; then
+        cp "$GAI_CONF" "${GAI_CONF}.bak"
+        echo "✔ 已备份 $GAI_CONF -> ${GAI_CONF}.bak"
+    else
+        echo "✔ 备份文件已存在，跳过"
     fi
-    echo "✔ 已设置 IPv4 优先"
+
+    # ---------- 设置 IPv4 优先 ----------
+    if grep -q "^precedence ::ffff:0:0/96 100" "$GAI_CONF"; then
+        echo "✔ IPv4 优先已存在，无需修改"
+    else
+        sed -i 's/^#precedence ::ffff:0:0\/96 100/precedence ::ffff:0:0\/96 100/' "$GAI_CONF"
+        if ! grep -q "^precedence ::ffff:0:0/96 100" "$GAI_CONF"; then
+            echo "precedence ::ffff:0:0/96 100" >> "$GAI_CONF"
+        fi
+        echo "✔ 已设置 IPv4 优先"
+    fi
 fi
 
 # ---------- 显示当前 DNS ----------
