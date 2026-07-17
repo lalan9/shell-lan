@@ -1,11 +1,10 @@
+
 #!/bin/bash
 # ====================================================
 # IPv4 优先 + IPv6 保留（兼容 KVM / OpenVZ / LXC 容器）
 # 支持 Debian 11/12 / CentOS 7/8
 # 显示当前 DNS + IPv4 / IPv6 出口测试
 # ====================================================
-
-set -e
 
 echo "======================================"
 echo " 开始设置：IPv4 优先（保留 IPv6）"
@@ -16,14 +15,14 @@ GAI_CONF="/etc/gai.conf"
 # ---------- 1. 处理标准系统的 gai.conf ----------
 if [ ! -f "$GAI_CONF" ]; then
     echo "⚠️ 未找到 $GAI_CONF，正在为你自动创建默认配置..."
-    cat << EOF > "$GAI_CONF"
+    cat << 'INNER_EOF' > "$GAI_CONF"
 # /etc/gai.conf 默认配置（由脚本自动初始化）
 precedence  ::1/128       50
 precedence  ::/0          40
 precedence  ::ffff:0:0/96 100
 precedence  2002::/16     30
 precedence  2001::/32      5
-EOF
+INNER_EOF
     echo "✔ $GAI_CONF 创建成功"
 else
     if [ ! -f "${GAI_CONF}.bak" ]; then
@@ -43,18 +42,16 @@ else
 fi
 
 # ---------- 2. 针对 CentOS 7 / OpenVZ / LXC 的双重保险别名设置 ----------
-# 检查是否为 CentOS 7
 if [ -f /etc/redhat-release ] && grep -q "release 7" /etc/redhat-release; then
     echo "ℹ 检测到 CentOS 7 系统，正在注入工具级 IPv4 别名以确保完全兼容..."
     
-    # 写入全局 bashrc，防止 OpenVZ 容器下 gai.conf 失效
     if ! grep -q "alias curl='curl -4'" /etc/bashrc; then
-        cat << 'EOF' >> /etc/bashrc
+        cat << 'INNER_EOF' >> /etc/bashrc
 
 # IPv4 优先兼容性设置 (By Script)
 alias curl='curl -4'
 alias wget='wget -4'
-EOF
+INNER_EOF
         echo "✔ 已将 curl/wget 别名写入 /etc/bashrc"
     else
         echo "✔ curl/wget 别名已存在，跳过"
@@ -77,14 +74,12 @@ echo
 echo "======================================"
 echo " 当前 默认 出口测试"
 echo "======================================"
-# 这里去掉 -4，直接测试系统默认会不会走 IPv4
 curl -s --connect-timeout 5 https://icanhazip.com || echo "默认出口请求失败"
 
 echo
 echo "======================================"
 echo " 强制 IPv6 出口测试"
 echo "======================================"
-# 这里的 \curl 是为了绕过刚刚设置的别名，强制走纯 IPv6 测试
 \curl -6 -s --connect-timeout 5 https://icanhazip.com || echo "IPv6 请求失败"
 
 # ---------- getent 验证 ----------
