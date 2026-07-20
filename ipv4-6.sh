@@ -1,97 +1,145 @@
-
 #!/bin/bash
 # ====================================================
-# IPv4 优先 + IPv6 保留（兼容 KVM / OpenVZ / LXC 容器）
-# 支持 Debian 11/12 / CentOS 7/8
-# 显示当前 DNS + IPv4 / IPv6 出口测试
+# IPv4 / IPv6 优先级切换脚本
+# 支持 Debian / Ubuntu / CentOS / KVM / OpenVZ / LXC
+#
+# 1 = IPv4 优先
+# 2 = IPv6 优先
 # ====================================================
 
 echo "======================================"
-echo " 开始设置：IPv4 优先（保留 IPv6）"
+echo " IPv4 / IPv6 优先级设置"
 echo "======================================"
+
+echo ""
+echo "请选择网络优先级："
+echo "1) IPv4 优先"
+echo "2) IPv6 优先"
+echo ""
+
+read -p "请输入选项 [1-2]: " CHOICE
+
 
 GAI_CONF="/etc/gai.conf"
 
-# ---------- 1. 处理标准系统的 gai.conf ----------
-if [ ! -f "$GAI_CONF" ]; then
-    echo "⚠️ 未找到 $GAI_CONF，正在为你自动创建默认配置..."
-    cat << 'INNER_EOF' > "$GAI_CONF"
-# /etc/gai.conf 默认配置（由脚本自动初始化）
-precedence  ::1/128       50
-precedence  ::/0          40
-precedence  ::ffff:0:0/96 100
-precedence  2002::/16     30
-precedence  2001::/32      5
-INNER_EOF
-    echo "✔ $GAI_CONF 创建成功"
-else
-    if [ ! -f "${GAI_CONF}.bak" ]; then
-        cp "$GAI_CONF" "${GAI_CONF}.bak"
-        echo "✔ 已备份 $GAI_CONF -> ${GAI_CONF}.bak"
-    fi
 
-    if grep -q "^precedence ::ffff:0:0/96 100" "$GAI_CONF"; then
-        echo "✔ $GAI_CONF 中 IPv4 优先已存在"
-    else
-        sed -i 's/^#precedence ::ffff:0:0\/96 100/precedence ::ffff:0:0\/96 100/' "$GAI_CONF"
-        if ! grep -q "^precedence ::ffff:0:0/96 100" "$GAI_CONF"; then
-            echo "precedence ::ffff:0:0/96 100" >> "$GAI_CONF"
-        fi
-        echo "✔ 已在 $GAI_CONF 中设置 IPv4 优先"
-    fi
+# 备份
+if [ -f "$GAI_CONF" ] && [ ! -f "${GAI_CONF}.bak" ]; then
+    cp "$GAI_CONF" "${GAI_CONF}.bak"
+    echo "✔ 已备份 $GAI_CONF"
 fi
 
-# ---------- 2. 针对 CentOS 7 / OpenVZ / LXC 的双重保险别名设置 ----------
-if [ -f /etc/redhat-release ] && grep -q "release 7" /etc/redhat-release; then
-    echo "ℹ 检测到 CentOS 7 系统，正在注入工具级 IPv4 别名以确保完全兼容..."
-    
-    if ! grep -q "alias curl='curl -4'" /etc/bashrc; then
-        cat << 'INNER_EOF' >> /etc/bashrc
 
-# IPv4 优先兼容性设置 (By Script)
-alias curl='curl -4'
-alias wget='wget -4'
-INNER_EOF
-        echo "✔ 已将 curl/wget 别名写入 /etc/bashrc"
-    else
-        echo "✔ curl/wget 别名已存在，跳过"
-    fi
-    
-    # 让别名在当前运行的脚本进程中临时生效
-    alias curl='curl -4'
-    alias wget='wget -4'
-fi
+case $CHOICE in
 
-# ---------- 显示当前 DNS ----------
-echo
-echo "======================================"
-echo " 当前 DNS 服务器"
-echo "======================================"
-grep -E "^(nameserver|search|options)" /etc/resolv.conf || echo "未检测到 DNS"
 
-# ---------- IPv4 / IPv6 出口测试 ----------
-echo
-echo "======================================"
-echo " 当前 默认 出口测试"
-echo "======================================"
-curl -s --connect-timeout 5 https://icanhazip.com || echo "默认出口请求失败"
+1)
 
-echo
-echo "======================================"
-echo " 强制 IPv6 出口测试"
-echo "======================================"
-\curl -6 -s --connect-timeout 5 https://icanhazip.com || echo "IPv6 请求失败"
+echo ""
+echo ">>> 设置 IPv4 优先"
 
-# ---------- getent 验证 ----------
-echo
-echo "======================================"
-echo " DNS 解析优先级测试（getent ahosts）"
-echo "======================================"
-getent ahosts google.com | awk '{print $1}' | uniq || true
+cat > "$GAI_CONF" <<EOF
+# IPv4 Priority
 
-echo
+precedence ::1/128       50
+precedence ::/0          40
+precedence ::ffff:0:0/96 100
+precedence 2002::/16     30
+precedence 2001::/32      5
+EOF
+
+
+echo "✔ IPv4 优先设置完成"
+
+;;
+
+
+2)
+
+echo ""
+echo ">>> 设置 IPv6 优先"
+
+cat > "$GAI_CONF" <<EOF
+# IPv6 Priority
+
+precedence ::1/128       50
+precedence ::/0          100
+precedence ::ffff:0:0/96 10
+precedence 2002::/16     30
+precedence 2001::/32      5
+EOF
+
+
+echo "✔ IPv6 优先设置完成"
+
+;;
+
+
+*)
+
+echo "❌ 输入错误，请输入 1 或 2"
+exit 1
+
+;;
+
+esac
+
+
+
+echo ""
 echo "======================================"
-echo " 设置完成 ✅"
-echo " IPv4 已优先，IPv6 仍然可用"
-echo " 注意：CentOS 7 用户请执行 'source /etc/bashrc' 刷新当前终端"
+echo " 当前 DNS"
+echo "======================================"
+
+grep -E "^(nameserver|search|options)" /etc/resolv.conf || echo "无"
+
+
+echo ""
+echo "======================================"
+echo " 默认出口测试"
+echo "======================================"
+
+curl -s --connect-timeout 5 https://icanhazip.com || echo "失败"
+
+
+
+echo ""
+echo "======================================"
+echo " IPv4 测试"
+echo "======================================"
+
+curl -4 -s --connect-timeout 5 https://icanhazip.com || echo "IPv4失败"
+
+
+
+echo ""
+echo "======================================"
+echo " IPv6 测试"
+echo "======================================"
+
+curl -6 -s --connect-timeout 5 https://icanhazip.com || echo "IPv6失败"
+
+
+
+echo ""
+echo "======================================"
+echo " DNS 优先级验证"
+echo "======================================"
+
+getent ahosts google.com | awk '{print $1}' | uniq
+
+
+echo ""
+echo "======================================"
+echo " 完成 ✅"
+echo " 当前模式:"
+case $CHOICE in
+1)
+echo "IPv4 优先"
+;;
+2)
+echo "IPv6 优先"
+;;
+esac
+
 echo "======================================"
