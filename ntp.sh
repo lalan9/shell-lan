@@ -2,232 +2,314 @@
 
 set -e
 
-SERVICE_NAME="ntp-manager"
 
-GREEN="\033[32m"
-YELLOW="\033[33m"
-RED="\033[31m"
-RESET="\033[0m"
-
-
-echo_color(){
-    echo -e "${1}${2}${RESET}"
-}
+echo "================================"
+echo "       NTP 时间同步配置"
+echo "       离线模式"
+echo "================================"
 
 
-check_root(){
-
-if [ "$EUID" != "0" ]; then
-    echo_color $RED "请使用 root 执行"
-    exit 1
-fi
-
-}
-
-
-
-detect_os(){
-
-if [ -f /etc/os-release ]; then
-
-    . /etc/os-release
-
-    OS=$ID
-    VERSION=$VERSION_ID
-
-else
-
-    echo_color $RED "无法识别系统"
-    exit 1
-
-fi
-
+# ----------------------------
+# 输入 NTP
+# ----------------------------
 
 echo
-
-echo_color $GREEN "系统:"
-echo "$PRETTY_NAME"
-
-}
-
-
-
-install_pkg(){
-
-case "$OS" in
-
-
-debian|ubuntu)
-
-    apt update
-
-    ;;
-
-
-centos|rhel|rocky|almalinux|openEuler|anolis|alinux|tencentos)
-
-    yum makecache || dnf makecache
-
-    ;;
-
-esac
-
-}
-
-
-
-install_time_service(){
-
-
-case "$OS" in
-
-
-debian|ubuntu)
-
-
-echo_color $YELLOW "使用 systemd-timesyncd"
-
-
-if ! command -v timedatectl >/dev/null
-then
-
-apt install -y systemd
-
-fi
-
-
-SERVICE="systemd-timesyncd"
-
-
-;;
-
-
-
-centos|rhel|rocky|almalinux|openEuler|anolis|alinux|tencentos)
-
-
-echo_color $YELLOW "使用 chrony"
-
-
-if ! command -v chronyd >/dev/null
-then
-
-yum install -y chrony || dnf install -y chrony
-
-fi
-
-
-SERVICE="chronyd"
-
-
-;;
-
-
-*)
-
-echo_color $RED "未知系统，尝试 chrony"
-
-yum install -y chrony || true
-
-SERVICE="chronyd"
-
-
-;;
-
-esac
-
-
-}
-
-
-
-
-input_ntp(){
-
-
+echo "请输入 NTP 地址"
 echo
-
-echo_color $GREEN "请输入NTP服务器"
-
 echo "例如:"
 echo "ntp.aliyun.com"
 echo "ntp.tencent.com"
 echo "ntp1.bdtime.cn (北斗)"
-
 echo
 
 read -p "NTP地址(多个空格分开): " NTP
 
 
 if [ -z "$NTP" ];then
+    NTP="ntp.aliyun.com ntp.tencent.com ntp1.bdtime.cn"
+fi
 
-NTP="ntp.aliyun.com ntp.tencent.com ntp1.bdtime.cn"
+
+
+# ----------------------------
+# 检测同步工具
+# ----------------------------
+
+
+TYPE=""
+
+
+
+# chrony
+
+if command -v chronyc >/dev/null 2>&1; then
+
+    if systemctl list-unit-files 2>/dev/null | grep -q chronyd; then
+
+        TYPE="chrony"
+        SERVICE="chronyd"
+
+    elif systemctl list-unit-files 2>/dev/null | grep -q chrony; then
+
+        TYPE="chrony"
+        SERVICE="chrony"
+
+    fi
 
 fi
 
 
-}
+
+# systemd-timesyncd
+
+if [ -z "$TYPE" ]; then
+
+    if systemctl list-unit-files 2>/dev/null | grep -q systemd-timesyncd; then
+
+        TYPE="timesyncd"
+        SERVICE="systemd-timesyncd"
+
+    fi
+
+fi
 
 
 
-config_time(){
+# ntpd
 
+if [ -z "$TYPE" ]; then
 
-timedatectl set-timezone Asia/Shanghai
+    if command -v ntpq >/dev/null 2>&1; then
 
+        TYPE="ntpd"
+        SERVICE="ntp"
 
+    fi
 
-if [ "$SERVICE" = "systemd-timesyncd" ];then
-
-
-cat >/etc/systemd/timesyncd.conf <<EOF
-
-[Time]
-NTP=$NTP
-FallbackNTP=ntp.aliyun.com ntp.tencent.com ntp1.bdtime.cn
-EOF
-
-
-systemctl enable systemd-timesyncd
-systemctl restart systemd-timesyncd
+fi
 
 
 
-else
+# ntpsec
+
+if [ -z "$TYPE" ]; then
+
+    if command -v ntpsec-ntpq >/dev/null 2>&1; then
+
+        TYPE="ntpsec"
+        SERVICE="ntpsec"
+
+    fi
+
+fi
 
 
 
-cp /etc/chrony.conf /etc/chrony.conf.bak 2>/dev/null || true
+if [ -z "$TYPE" ];then
+
+    echo
+    echo "================================"
+    echo "没有检测到系统时间同步工具"
+    echo "================================"
+    echo
+    echo "已存在:"
+    echo " - chrony"
+    echo " - systemd-timesyncd"
+    echo " - ntpd"
+    echo " - ntpsec"
+    echo
+    echo "脚本不会自动安装"
+    exit 1
+
+fi
 
 
-sed -i '/^server/d' /etc/chrony.conf
-sed -i '/^pool/d' /etc/chrony.conf
+
+echo
+echo "检测到:"
+echo "$TYPE"
+echo
 
 
 
-for n in $NTP
+# ----------------------------
+# 配置 chrony
+# ----------------------------
+
+if [ "$TYPE" = "chrony" ];then
+
+
+echo "配置 chrony"
+
+
+CONF="/etc/chrony.conf"
+
+
+if [ -f /etc/chrony/chrony.conf ];then
+    CONF="/etc/chrony/chrony.conf"
+fi
+
+
+
+cp "$CONF" "$CONF.bak.$(date +%F_%H%M%S)"
+
+
+sed -i '/^server /d;/^pool /d' "$CONF"
+
+
+for i in $NTP
 do
 
-echo "server $n iburst" >> /etc/chrony.conf
+echo "server $i iburst" >> "$CONF"
 
 done
 
 
 
-systemctl enable chronyd
-systemctl restart chronyd
+systemctl enable "$SERVICE" 2>/dev/null || true
+
+systemctl restart "$SERVICE" 2>/dev/null || true
+
 
 
 fi
 
 
 
-}
+
+
+# ----------------------------
+# systemd-timesyncd
+# ----------------------------
+
+if [ "$TYPE" = "timesyncd" ];then
+
+
+echo "配置 systemd-timesyncd"
+
+
+mkdir -p /etc/systemd
+
+
+cat >/etc/systemd/timesyncd.conf <<EOF
+
+[Time]
+
+NTP=$NTP
+
+EOF
+
+
+
+systemctl enable systemd-timesyncd 2>/dev/null || true
+
+systemctl restart systemd-timesyncd 2>/dev/null || true
+
+
+fi
 
 
 
 
-create_command(){
+
+# ----------------------------
+# ntpd
+# ----------------------------
+
+if [ "$TYPE" = "ntpd" ];then
+
+
+echo "配置 ntpd"
+
+
+CONF="/etc/ntp.conf"
+
+
+if [ -f "$CONF" ];then
+
+
+cp "$CONF" "$CONF.bak.$(date +%F_%H%M%S)"
+
+
+sed -i '/^server /d' "$CONF"
+
+
+
+for i in $NTP
+do
+
+echo "server $i iburst" >> "$CONF"
+
+done
+
+
+systemctl enable ntp 2>/dev/null || true
+
+systemctl restart ntp 2>/dev/null || true
+
+
+fi
+
+
+fi
+
+
+
+
+
+# ----------------------------
+# ntpsec
+# ----------------------------
+
+if [ "$TYPE" = "ntpsec" ];then
+
+
+echo "配置 ntpsec"
+
+
+CONF="/etc/ntpsec/ntp.conf"
+
+
+cp "$CONF" "$CONF.bak.$(date +%F_%H%M%S)"
+
+
+sed -i '/^server /d' "$CONF"
+
+
+
+for i in $NTP
+do
+
+echo "server $i iburst" >> "$CONF"
+
+done
+
+
+systemctl enable ntpsec 2>/dev/null || true
+
+systemctl restart ntpsec 2>/dev/null || true
+
+
+fi
+
+
+
+
+
+# ----------------------------
+# 时区
+# ----------------------------
+
+
+timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
+
+
+
+
+
+# ----------------------------
+# 创建控制面板
+# ----------------------------
 
 
 cat >/usr/local/bin/ntp <<'EOF'
@@ -241,28 +323,30 @@ echo "================================"
 
 
 echo
-
 echo "当前时间:"
 date
 
 
 echo
-
 echo "同步状态:"
-timedatectl status
+timedatectl
 
 
 echo
-
 echo "================================"
-echo "NTP服务器"
+echo "当前同步源"
 echo "================================"
 
 
-if command -v chronyc >/dev/null
-then
+if command -v chronyc >/dev/null 2>&1;then
 
 chronyc sources -v
+
+
+elif command -v ntpq >/dev/null 2>&1;then
+
+ntpq -p
+
 
 else
 
@@ -273,32 +357,32 @@ fi
 
 
 echo
-
 echo "================================"
 echo "北斗时间源"
 echo "================================"
 
 
-echo "推荐:"
+echo "域名:"
 echo "ntp1.bdtime.cn"
 echo "ntp2.bdtime.cn"
 
 
 echo
 
+if command -v dig >/dev/null 2>&1;then
+
 echo "IPv4:"
-curl -4 -s ip.sb || true
+dig +short ntp1.bdtime.cn A
 
 
 echo
-
 echo "IPv6:"
-curl -6 -s ip.sb || true
+dig +short ntp1.bdtime.cn AAAA
+
+fi
 
 
 echo
-
-echo "================================"
 
 EOF
 
@@ -307,59 +391,28 @@ chmod +x /usr/local/bin/ntp
 
 
 
-}
-
-
-
-show_status(){
 
 
 echo
-
-echo_color $GREEN "配置完成"
-
-echo
-
-timedatectl status
+echo "================================"
+echo "配置完成"
+echo "================================"
 
 
 echo
+echo "同步工具:"
+echo "$TYPE"
 
+
+echo
 echo "输入:"
 echo
-
 echo " ntp "
+echo
+echo "查看同步状态"
+
+
 
 echo
 
-echo "进入时间同步控制面板"
-
-
-}
-
-
-
-main(){
-
-
-check_root
-
-detect_os
-
-install_pkg
-
-install_time_service
-
-input_ntp
-
-config_time
-
-create_command
-
-show_status
-
-
-}
-
-
-main
+ntp
